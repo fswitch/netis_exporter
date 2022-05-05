@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+
+# prettyprinter
+# pycurl (libcurl-devel, python3-devel, openssl-devel, gcc)
+# PyYAML
+
+# manual start:
+# python3 -m venv virt
+# source virt/bin/activate
+# python3 netis_exporter --config=./netis_exporter.yml
+
+import time
+import sys
+import pycurl
+from prettyprinter import pprint
+import pathlib
+import io
+import json
+from multiprocessing import Process, Manager
+from http.server import HTTPServer
+from http.server import BaseHTTPRequestHandler
+import datetime
+import multiprocessing
+import yaml
+
+dirpath = str(pathlib.Path(__file__).parent.absolute())
+
+pageContents = io.BytesIO()
+
+dirpath = str(pathlib.Path(__file__).parent.absolute())
+
+config_import = ''
+if len(sys.argv) > 1:
+    for arg in sys.argv:
+        row = arg.split('=')
+        if row[0] == '--config':
+            config_import = row[1].strip()
+
+if len(config_import) < 1:
+    config_import = dirpath+'/netis_exporter.yml'
+
+if len(config_import) < 1 or not pathlib.Path(config_import).exists():
+    print('No config file')
+    exit()
+
+with open(config_import, "r") as stream:
+    try:
+        confs = yaml.safe_load(stream)
+    except yaml.YAMLError as exc:
+        print(exc)
+        exit()
+
+# Get Netis stats every HOST_GET_TIME seconds
+if not confs['query_time']:
+    HOST_GET_TIME = 7200
+else:
+    HOST_GET_TIME = confs['query_time']
+
+# Get Netis stats every HTTP_TIMEOUT seconds
+if not confs['http_timeout']:
+    HTTP_TIMEOUT = 7
+else:
+    HTTP_TIMEOUT = confs['http_timeout']
+
+# IP address for exporter's http data
+if not confs['source_ip_address']:
+    EXPORTER_IP = '127.0.0.1'
+else:
+    EXPORTER_IP = confs['source_ip_address']
+
+# IP port for exporter's http data
+if not confs['source_ip_port']:
+    EXPORTER_PORT = 9960
+else:
+    EXPORTER_PORT = confs['source_ip_port']
+
+if not confs['http_log_show']:
+    HTTP_LOG_SHOW = 1
+else:
+    HTTP_LOG_SHOW = confs['http_log_show']
+
+if not confs['equipment']:
+    print('No equimpent configs')
+    exit()
+
+
+for netis_key in confs['equipment']:
+    netis_conf = confs['equipment'][netis_key]
+
+
+class QueuingHTTPServer(HTTPServer):
+
+    def __init__(self, server_address, HttpGetHandler, data, bind_and_activate=True):
+        HTTPServer.__init__(self, server_address,
+                            HttpGetHandler, bind_and_activate)
+        self.data = data
+
+
+class HttpGetHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+
+        if self.path == '/metrics':
+            self.send_response(200)
+            self.send_header(
+                "Content-type", "text/plain; version=0.0.4; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(
+                '# HELP netis_port_stats Packets and bytes on port\n'.encode())
+            self.wfile.write('# TYPE netis_port_stats gauge\n'.encode())
+            """self.wfile.write(
+                'netis_up {instance="'+row['instance']+'"}\n'.encode())"""
+
+            metrics_output = ''
+            for eq in data['equipment']:
+                rows = data[data['equipment'][eq]['instance']]
+
+                for row in rows:
+                    metrics_output += 'netis_port_stats {'
+                    metrics_output += 'instance="'+row['instance']+'",'
+                    metrics_output += 'port_type="' + \
+                        row['port_type']+'",'
+                    metrics_output += 'type="tx_pack"'
+                    metrics_output += '} '+row['tx_pack']+'\n'
+
+                    metrics_output += 'netis_port_stats {'
+                    metrics_output += 'instance="'+row['instance']+'",'
+                    metrics_output += 'port_type="' + \
+                        row['port_type']+'",'
+                    metrics_output += 'type="rx_pack"'
+                    metrics_output += '} '+row['rx_pack']+'\n'
+
+                    metrics_output += 'netis_port_stats {'
+                    metrics_output += 'instance="'+row['instance']+'",'
+                    metrics_output += 'port_type="' + \
+                        row['port_type']+'",'
+                    metrics_output += 'type="tx_bytes"'
+                    metrics_output += '} '+row['tx_bytes']+'\n'
+
+                    metrics_output += 'netis_port_stats {'
+                    metrics_output += 'instance="'+row['instance']+'",'
+                    metrics_output += 'port_type="' + \
+                        row['port_type']+'",'
+                    metrics_output += 'type="rx_bytes"'
+                    metrics_output += '} '+row['rx_bytes']+'\n'
+
+            self.wfile.write(metrics_output.encode())
+        else:
+            self.send_response(200)
+            self.send_header("Content-type", "text/html")
+            self.end_headers()
+            self.wfile.write('<html><head><meta charset="utf-8">'.encode())
+            self.wfile.write(
+                '<title>Netis Stats Exporter.</title></head>'.encode())
+            self.wfile.write(
+                '<body><h1>Netis Stats</h1><p><a href="/metrics">Metrics</a></p></body></html>'.encode())
+
+
+def run_http(data):
+    httpd = QueuingHTTPServer(
+        (EXPORTER_IP, EXPORTER_PORT), HttpGetHandler, data)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pprint('KeyboardInterrupt')
+        httpd.server_close()
+
+
+def _netis_stats(data, netis_conf_one):
+    while True:
+
+        pageContents = io.BytesIO()
+        netis_data_exists = False
+        try:
+            curl = pycurl.Curl()
+            curl.setopt(pycurl.URL, netis_conf_one['url'])
+            curl.setopt(pycurl.TIMEOUT, HTTP_TIMEOUT)
+            curl.setopt(pycurl.USERPWD, '%s:%s' %
+                        (netis_conf_one['login'], netis_conf_one['password']))
+            curl.setopt(pycurl.WRITEFUNCTION, pageContents.write)
+            curl.perform()
+            curl.close()
+
+            pageContents.seek(0)
+            netis_data = pageContents.readlines()
+            pageContents.close()
+            netis_data_exists = True
+        except Exception as e:
+            pprint(e)
+
+        if netis_data_exists:
+            nd = netis_data[0].replace(b'\'', b'"')
+            try:
+                jd = json.loads(nd)
+
+                timestamp = str(
+                    int(datetime.datetime.timestamp(datetime.datetime.now()))
+                )
+
+                rows = []
+                for port_stat in jd['statistics_list']:
+                    rows.append({
+                        'instance': netis_conf_one['instance'],
+                        'port_type': port_stat['type'],
+                        'timestamp': timestamp,
+                        'tx_pack': port_stat['tx_pack'],
+                        'rx_pack': port_stat['rx_pack'],
+                        'tx_bytes': port_stat['tx_bytes'],
+                        'rx_bytes': port_stat['rx_bytes']
+                    })
+                data[netis_conf_one['instance']] = rows
+            except ValueError as e:
+                pprint(e)
+                pprint(nd)
+
+        time.sleep(HOST_GET_TIME)
+
+
+if __name__ == '__main__':
+    manager = multiprocessing.Manager()
+    data = manager.dict()
+    data['equipment'] = confs['equipment']
+    data['192.168.1.1'] = {}
+    data['192.168.11.1'] = {}
+
+    process_datas = []
+    for netis_key in confs['equipment']:
+        process_datas.append(Process(target=_netis_stats, args=(
+            data, confs['equipment'][netis_key]))
+        )
+    process_http = Process(target=run_http, args=(data,))
+
+    for process_data in process_datas:
+        process_data.start()
+    process_http.start()
+
+    for process_data in process_datas:
+        process_data.join()
+    process_http.join()

@@ -1,0 +1,16 @@
+source_ip_address: 127.0.0.1
+source_ip_port: 9960
+query_time: 10
+http_timeout: 7
+http_log_show: 0
+equipment:
+  192.168.1.1:
+    instance: 192.168.1.1
+    url: http://192.168.1.1/cgi-bin-igd/netcore_get.cgi
+    login: Admin
+    password:
+  192.168.11.1:
+    instance: 192.168.11.1
+    url: http://192.168.11.1/cgi-bin-igd/netcore_get.cgi
+    login: admin
+    password:
