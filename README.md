@@ -47,3 +47,7 @@ scrape_configs:
     static_configs:
       - targets: ["127.0.0.1:9960"]
 ```
+  
+### Grafana example
+![Netis Grafana](https://raw.githubusercontent.com/fswitch/netis_exporter/main/netis_grafana.png)
+  
