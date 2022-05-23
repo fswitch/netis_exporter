@@ -2,9 +2,9 @@
 
 Prometheus exporter for Netis home routers.  
 Netis routers can send port statistics via web.  
-This exporter get this statistics and make them suitable for Prometheus TSDB.  
+This exporter gets statistics data and makes it suitable for Prometheus TSDB.
 
----  
+---
 
 ## Config (netis_exporter.yml):
 
@@ -37,7 +37,7 @@ equipment:
     login: admin
     password:
 ```
-  
+
 ### Prometheus scraping
 
 ```
@@ -47,7 +47,7 @@ scrape_configs:
     static_configs:
       - targets: ["127.0.0.1:9960"]
 ```
-  
+
 ### Grafana example
+
 ![Netis Grafana](https://raw.githubusercontent.com/fswitch/netis_exporter/main/netis_grafana.png)
-  
